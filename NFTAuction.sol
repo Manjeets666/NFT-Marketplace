@@ -35,6 +35,7 @@ contract PriceConsumerV3 {
 
 contract nftSale is ERC721 {
     event NftBought(address _seller, address _buyer, uint256 _sellingPrice);
+    address public seller;
 
     mapping (uint256 => uint256) public idToPrice;
 
@@ -42,11 +43,22 @@ contract nftSale is ERC721 {
         _mint(msg.sender, 1);
     }
 
+    modifier onlySeller() {
+        require(seller == msg.sender, "caller is not the seller");
+        _;
+    }
+
     function allowForSale(uint256 _id, uint256 _sellingPrice) external {
         require(msg.sender == ownerOf(_id), "Not owner of this NFT");
         require(_sellingPrice > 0, "Price zero");
         idToPrice[_id] = _sellingPrice;
         transferNftToContract(_id);
+        seller= payable(msg.sender);
+    }
+
+    function cancelNftSale(uint256 _id) external onlySeller{
+        _transfer(address(this),seller, _id);
+        require(ownerOf(_id) != address(this),"NFT transfer failed");
     }
 
     function transferNftToContract(uint256 _id) internal {
@@ -58,13 +70,16 @@ contract nftSale is ERC721 {
         uint256 price = idToPrice[_id];
         require(price > 0, "This NFT is not for sale");
         require(msg.value == price, "Incorrect value");
-        
-        address seller = ownerOf(_id);
-        _transfer(seller, msg.sender, _id);
-        idToPrice[_id] = 0; // not for sale anymore
+        _transfer(address(this), msg.sender, _id);
         payable(seller).transfer(msg.value - (msg.value * 25/1000)); // send the ETH to the seller with 2.5% fee
-
+        idToPrice[_id] = 0;
+        seller = address(0);
+        
         emit NftBought(seller, msg.sender, msg.value);
+    }
+    
+    function changeSellPrice(uint256 _id, uint256 _newPrice) external onlySeller{
+        idToPrice[_id] = _newPrice;
     }
 }
 
@@ -83,10 +98,7 @@ contract nftAuction is ERC721, PriceConsumerV3  {
     //we need mapping to store the bidAmount of every Bidder
     mapping(address => uint256) public bidders;
     //to see if auction is ended or not
-    modifier isEnded(){
-        require(block.timestamp > endTime, "The auction has been ended"); 
-        _;
-    }
+
     modifier onlySeller() {
         require(seller == msg.sender, "caller is not the seller");
         _;
@@ -122,8 +134,8 @@ contract nftAuction is ERC721, PriceConsumerV3  {
         
     }
     
-    function makeBid(uint256 _id) external payable isEnded notNftSeller(_id) auctionOngoing(_id) {
-        require(idToBasePrice[_id] > 0, "This NFT is not auction");
+    function makeBid(uint256 _id) external payable notNftSeller(_id) auctionOngoing(_id) {
+        require(idToBasePrice[_id] > 0, "This NFT is not in auction");
         require(msg.value >= idToBasePrice[_id] && msg.value > highestBid,"There is already a higher or equal bid");
         if(highestBid != 0){
             bidders[highestBidder] += highestBid;
@@ -151,8 +163,13 @@ contract nftAuction is ERC721, PriceConsumerV3  {
 
     function endAuction(uint256 _id) external payable onlySeller auctionOngoing(_id){
         _transfer(address(this), highestBidder, _id);
-        idToBasePrice[_id] = 0; // not for auction anymore
         payable(seller).transfer(highestBid-(highestBid * 25/1000)); ///// send the ETH to the seller with 2.5% fee
+        idToBasePrice[_id] = 0; // not for auction anymore       
+        seller = payable(address(0));
+        endTime=0;
+        highestBidder=payable(address(0));
+        highestBid=0;
+
         emit AuctionEnded(highestBidder,highestBid);
 
     }
